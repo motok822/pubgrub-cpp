@@ -85,7 +85,7 @@ public:
 };
 
 template <class P_, class V_>
-class OfflineDependencyProvider : public DependencyProvider<P_, V_, std::string, std::pair<std::uint32_t, std::size_t>>
+class OfflineDependencyProvider : public DependencyProvider<P_, V_, std::string, std::pair<std::uint32_t, std::int32_t>>
 {
 public:
     using P = P_;
@@ -96,7 +96,7 @@ public:
     using DependencyConstraints = std::map<P, VS>;
     using VersionMap = std::map<V, DependencyConstraints>;
     using PackageDeps = std::map<P, VersionMap>;
-    using Priority = std::pair<std::uint32_t, std::size_t>;
+    using Priority = std::pair<std::uint32_t, std::int32_t>;
 
 private:
     PackageDeps dependencies_;
@@ -157,6 +157,7 @@ public:
         if (it == dependencies_.end())
             return std::nullopt;
         const VersionMap &ver_map = it->second;
+        // dependencyの左辺に登録されているversionのうち、rangeに含まれる最大のversionを返す
         for (auto it2 = ver_map.rbegin(); it2 != ver_map.rend(); ++it2)
         {
             const V &ver = it2->first;
@@ -182,9 +183,10 @@ public:
         return Dependencies<P, V, M>::available(ver_it->second, "OK");
     }
     // packageのdependencyを見たときに、packageの今決まっているversion範囲に基づいて優先度を計算する
+    // コンフリクトが多いpackageや許容されるversionが少ないpackageほど優先度が高くなるようにする
     Priority prioritize(const P &package, const VS &range, const PackageResolutionStatistics &package_conflicts_counts) override
     {
-        std::size_t version_count = 0;
+        std::int32_t version_count = 0;
         auto it_pkg = dependencies_.find(package);
         if (it_pkg != dependencies_.end())
         {
@@ -198,7 +200,7 @@ public:
         }
         if (version_count == 0)
             return {std::numeric_limits<std::uint32_t>::max(), 0};
-        return {static_cast<std::uint32_t>(package_conflicts_counts.conflict_count()), version_count};
+        return {static_cast<std::uint32_t>(package_conflicts_counts.conflict_count()), -version_count};
     }
 };
 
@@ -308,10 +310,50 @@ struct PackageAssignments
                 highest_decision_level};
         }
 
+        // Derivationsの場合、disjointになる時点が見つからなかった
+        // これは最初からincompat_termを満たしていたことを意味する
+        // 最初の導出時点を返す
+        if (!dated_derivations.empty())
+        {
+            const auto &first_dd = dated_derivations.front();
+            return {std::make_optional(first_dd.cause), first_dd.global_index, first_dd.decision_level};
+        }
+
         const auto &accum = assignments_intersection.term;
         throw std::logic_error(
-            "PackageAssignments::satisfier: expected decision, got derivations "
+            "PackageAssignments::satisfier: expected decision, got derivations with empty dated_derivations "
             "(Version ordering or invariants may be broken)");
+    }
+    friend std::ostream &operator<<(std::ostream &os, const PackageAssignments &pa)
+    {
+        os << "PackageAssignments(";
+        // os << "assignments_intersection=";
+        if (pa.assignments_intersection.isDecision())
+        {
+            os << "Decision(version=" << pa.assignments_intersection.version << ")";
+        }
+        else
+        {
+            os << "Derivations(term=" << pa.assignments_intersection.term << ")";
+        }
+        // os << ", dated_derivations=[";
+        // bool first = true;
+        // for (const auto &dd : pa.dated_derivations)
+        // {
+        //     if (!first)
+        //         os << ", ";
+        //     first = false;
+        //     os << "{global_index=" << dd.global_index
+        //        << ", decision_level=" << dd.decision_level.level
+        //        << ", cause=" << dd.cause
+        //        << ", accumulated_intersection=" << dd.accumulated_intersection
+        //        << "}";
+        // }
+        // os << "]";
+        // os << ", smallest_decision_level=" << pa.smallest_decision_level.level;
+        // os << ", highest_decision_level=" << pa.highest_decision_level.level;
+        os << ")";
+        return os;
     }
 };
 
@@ -421,9 +463,61 @@ public:
                 return i;
         return static_cast<size_t>(-1);
     }
+    template <typename IncompRange>
+    std::optional<IncompId>
+    add_package_version_incompatibilities(
+        Id<P> package,
+        const V &version,
+        const IncompRange &new_incompatibilities,
+        const Arena<Incomp> &store)
+    {
+        // まだ一度も backtrack していないなら fast path:
+        // 依存関係をチェックせずにそのまま決定として追加してしまう。
+        if (!has_ever_backtracked)
+        {
+            add_decision(package, version);
+            return std::nullopt;
+        }
 
-    void
-    add_decision(Id<P> package, const V &version)
+        // 依存 incompat がこの (package, version) を禁止していないか調べる。
+        Term<V> package_term = Term<V>::exact(version);
+
+        auto relation = [&](IncompId incompat_id) -> IncompatRelation<P>
+        {
+            const Incomp &inc = store[incompat_id];
+            return inc.relation([&](Id<P> p) -> const Term<V> *
+                                {
+                // まだ partial_solution にはこの package の決定は入っていないので、
+                // 自分自身については「これから決めたい version を表す term」を返す。
+                if (p == package) {
+                    return &package_term;
+                } else {
+                    // 他のパッケージについては、現在の partial_solution の
+                    // term_intersection を参照する（なければ nullptr）。
+                    return term_intersection_for_package(p);
+                } });
+        };
+
+        // 追加された incompat 群の中に、
+        // 「今の partial_solution + (package=version) を完全に満たしてしまう
+        // ＝ conflict になる」ものがあるか探す。
+        for (IncompId incompat_id : new_incompatibilities)
+        {
+            if (relation(incompat_id).tag == IncompatRelationTag::Satisfied)
+            {
+                // このバージョンを決定すると依存関係と矛盾するので reject
+                // log_info("rejecting decision {} @ {} because its dependencies conflict", package, version);
+                return incompat_id; // 衝突した incompat を返す
+            }
+        }
+
+        // どの incompat も conflict を起こさなかったので、この package@version を決定として追加
+        // log_info("adding decision: {} @ {}", package, version);
+        add_decision(package, version);
+        return std::nullopt;
+    }
+
+    void add_decision(Id<P> package, const V &version)
     {
 #ifdef DEBUG
         {
@@ -442,12 +536,18 @@ public:
             }
         }
 #endif
+        size_t new_idx = current_decision_level.level;
         current_decision_level = current_decision_level.increment();
         auto *pa = find_package_assignments(package);
         if (!pa)
             throw std::logic_error("add_decision: package assignments not found");
+        size_t old_idx = index_of(package);
         pa->highest_decision_level = current_decision_level;
         pa->assignments_intersection = AssignmentsIntersection<V>::makeDecision(next_global_index, version);
+        std::cout << current_decision_level.level << " " << package_assignments.size() << std::endl;
+        if (old_idx != new_idx)
+            std::swap(package_assignments[old_idx], package_assignments[new_idx]);
+        std::cout << "hello" << std::endl;
         next_global_index += 1;
     }
 
@@ -494,7 +594,7 @@ public:
     std::optional<std::pair<Id<P>, const VS *>>
     pick_highest_priority_pkg(Prioritizer prioritizer)
     {
-        for (auto it = outdated_priorities.begin(); it != outdated_priorities.end(); ++it)
+        for (auto it = outdated_priorities.begin(); it != outdated_priorities.end();)
         {
             Id<P> p = *it;
             it = outdated_priorities.erase(it);
@@ -544,7 +644,7 @@ public:
                 for (std::size_t j = 0; j < package_assignments.size(); ++j)
                 {
                     const auto &e = package_assignments[j];
-                    oss << " * Package ID: " << e.first.into_raw() << "\n";
+                    oss << " * Package ID: " << e.first.into_raw() << " " << e.second.assignments_intersection.term_ref() << "\n";
                 }
                 throw std::logic_error(oss.str());
             }
@@ -611,6 +711,10 @@ public:
     }
 
     // 引数のincompatibilityと現在導出されているpackageとの間の関係
+    // Incompatibilityの全ての制約が満たされているならSatisfied (わかりにくいが、これがコンフリクトが起きている状態、Incompatibilityは全て満たされるいる状態ではだめ)
+    // 一つだけ満たされていないならAlmostSatisfied
+    // 二つ以上満たされていないならContradicted
+    // そもそもまだ決まっていないpackageがあって判断できないならInconclusive
     IncompatRelation<P> relation(const Incomp &incompat) const
     {
         return incompat.relation([&](Id<P> pkg)
@@ -618,9 +722,11 @@ public:
     }
     // Incompatibilityの全ての制約の中で一つでも制約を満たさなければ発火しないので、
     // 全てのパッケージに対してそのような制約をPartial Solutionが満たす状況を探している
-    SatisfiedMap find_satisfier(const Incomp &incompat) const
+    template <class PackageStore>
+    SatisfiedMap find_satisfier(const Incomp &incompat, const PackageStore &pkgs) const
     {
         SatisfiedMap satisfied;
+        std::cout << "find_satisfier called for: " << incompat.display(pkgs) << "\n";
         for (auto it = incompat.begin(); it != incompat.end(); ++it)
         {
             Id<P> package = it->first;
@@ -629,20 +735,23 @@ public:
             const auto *pa = find_package_assignments(package);
             if (!pa)
                 throw std::logic_error("find_satisfier: package assignments not found");
+            // std::cout << "find_satisfier: package " << pkgs[package] << ", incompat_term " << incompat_term << ", negate=" << incompat_term.negate() << "\n";
+            // std::cout << "  PA state: " << *pa << "\n";
             Information info = pa->satisfier(package, incompat_term.negate());
             satisfied.insert(package, info);
         }
         return satisfied;
     }
+    template <class PackageStore>
     std::pair<Id<P>, SatisfierSearch<P, V, M>>
-    satisfier_search(const Incomp &incompat, const Arena<Incomp> &store) const
+    satisfier_search(const Incomp &incompat, const Arena<Incomp> &store, const PackageStore &pkgs) const
     {
-        auto satisfied_map = find_satisfier(incompat);
+        auto satisfied_map = find_satisfier(incompat, pkgs);
         Id<P> satisfier_package{};
         std::tuple<std::optional<IncompId>, uint32_t, DecisionLevel> satisfier_info{};
         uint32_t max_gidx = 0;
 
-        // 一番満たす制約で緩いやつを持ってくる処理
+        // 一番満たす制約でglobal indexが大きいものを探す
         for (auto it = satisfied_map.begin(); it != satisfied_map.end(); ++it)
         {
             auto [cause, gidx, dl] = it->second;

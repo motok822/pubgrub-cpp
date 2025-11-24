@@ -75,6 +75,48 @@ public:
         : terms_(std::move(terms)), kind_(std::move(kind))
     {
     }
+    friend std::ostream &operator<<(std::ostream &os, const Incompatibility &inc)
+    {
+        os << "Incompatibility(";
+        bool first = true;
+        for (auto it = inc.terms_.begin(); it != inc.terms_.end(); ++it)
+        {
+            if (!first)
+                os << ", ";
+            first = false;
+            os << it->first << ": " << it->second;
+        }
+        os << "; Kind: ";
+        std::visit(
+            [&](const auto &k)
+            {
+                using T = std::decay_t<decltype(k)>;
+                if constexpr (std::is_same_v<T, NotRoot>)
+                {
+                    os << "NotRoot(pkg=" << k.pkg << ", version=" << k.version << ")";
+                }
+                else if constexpr (std::is_same_v<T, NoVersions>)
+                {
+                    os << "NoVersions(pkg=" << k.pkg << ", ranges=" << k.ranges << ")";
+                }
+                else if constexpr (std::is_same_v<T, FromDependencyOf>)
+                {
+                    os << "FromDependencyOf(pkg1=" << k.pkg1 << ", ranges1=" << k.ranges1
+                       << ", pkg2=" << k.pkg2 << ", ranges2=" << k.ranges2 << ")";
+                }
+                else if constexpr (std::is_same_v<T, DerivedFrom>)
+                {
+                    os << "DerivedFrom(base1=" << k.base1 << ", base2=" << k.base2 << ")";
+                }
+                else if constexpr (std::is_same_v<T, Custom>)
+                {
+                    os << "Custom(pkg=" << k.pkg << ", ranges=" << k.ranges << ", metadata=...)";
+                }
+            },
+            inc.kind_);
+        os << ")";
+        return os;
+    }
     static Self not_root(PId pkg, const V &version)
     {
         SmallMap<PId, Term<V>> mp;
@@ -106,6 +148,7 @@ public:
         mp.insert(pkg, t);
         return Self(std::move(mp), Kind{Custom{pkg, std::move(set), meta}});
     }
+    // depを反転させてIncompatibilityを作成する
     static Self from_dependency(PId pkg, const VS &versions, std::pair<PId, VS> dep)
     {
         auto [p2, set2] = dep;
@@ -198,8 +241,19 @@ public:
         if (t2)
         {
             Term<V> new_term = t1->intersection(*t2);
-            if (!(new_term == Term<V>::any()))
+            if (new_term == Term<V>::any())
             {
+                // any()の場合、packageの制約を削除
+                merged.remove(package);
+            }
+            else if (new_term == Term<V>::empty())
+            {
+                // empty()の場合、packageの制約を削除
+                merged.remove(package);
+            }
+            else
+            {
+                // 通常のtermの場合、挿入
                 merged.insert(package, new_term);
             }
         }
@@ -233,6 +287,7 @@ public:
                 }
                 else
                 {
+                    // Inconclusive(被りはある)状態
                     if (rel.tag == IncompatRelationTag::Satisfied)
                     {
                         rel = IncompatRelation<P>::AlmostSatisfied(pkg);
@@ -245,8 +300,10 @@ public:
             }
             else
             {
+                // まだ決まっていないpackageがある
                 if (rel.tag == IncompatRelationTag::Satisfied)
                 {
+                    // 一つだけならAlmostSatisfiedにする
                     rel = IncompatRelation<P>::AlmostSatisfied(pkg);
                 }
                 else

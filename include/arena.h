@@ -28,11 +28,13 @@ struct Id
 };
 
 // Specialize std::hash for Id<T>
-namespace std {
+namespace std
+{
     template <class T>
     struct hash<Id<T>>
     {
-        std::size_t operator()(const Id<T> &s) const noexcept {
+        std::size_t operator()(const Id<T> &s) const noexcept
+        {
             return std::hash<uint32_t>{}(s.raw);
         }
     };

@@ -275,11 +275,13 @@ public:
         case 2:
             if (Eq{}(std::get<2>(data_)[0].first, key))
             {
-
+                // 最初の要素を削除、2つ目の要素だけ残す
+                data_.template emplace<P1>(P1{std::pair<const K, V>(std::get<2>(data_)[1].first, std::move(std::get<2>(data_)[1].second))});
                 return;
             }
             if (Eq{}(std::get<2>(data_)[1].first, key))
             {
+                // 2つ目の要素を削除、最初の要素だけ残す
                 data_.template emplace<P1>(P1{std::pair<const K, V>(std::get<2>(data_)[0].first, std::move(std::get<2>(data_)[0].second))});
                 return;
             }

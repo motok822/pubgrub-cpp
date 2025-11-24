@@ -105,7 +105,7 @@ public:
     static Ranges between(const V &low, const V &high)
     {
         Ranges<V> r;
-        r.segments_.push_back({B::open(low), B::open(high)});
+        r.segments_.push_back({B::closed(low), B::open(high)});
         return r;
     }
     bool is_empty() const

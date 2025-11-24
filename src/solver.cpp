@@ -1,10 +1,11 @@
 #include "../include/provider.h"
 #include "../include/incompatibility.h"
 #include "../include/core.h"
+using namespace std;
 
 template <typename DP>
 std::unordered_map<typename DP::P, typename DP::V> resolve(
-    DP &dependency_provider,
+    OfflineDependencyProvider<typename DP::P, typename DP::V> &dependency_provider,
     const typename DP::P &package,
     const typename DP::V &version)
 {
@@ -17,20 +18,23 @@ std::unordered_map<typename DP::P, typename DP::V> resolve(
     using IncompId = Id<Incompatibility<P, V, M>>;
     using Incomp = Incompatibility<P, V, M>;
 
-    // Create a temporary package store to allocate the root package ID
-    HashArena<P> temp_store;
-    Id<P> root_pkg = temp_store.alloc(package);
-
-    // Create the state with root package ID and version
-    State<DP> state(root_pkg, version);
-
-    // Now register the root package in state's package store
-    state.package_store.alloc(package);
+    // Initialize state with root package and version
+    State<DP> state = State<DP>::init(package, version);
     std::map<Id<P>, PackageResolutionStatistics> conflict_tracker;
     std::map<Id<P>, std::set<V>> added_dependencies;
     Id<P> next = state.root_package;
     while (true)
     {
+        for (const auto &kv : state.partial_solution.package_assignments)
+        {
+            cout << "PackageAssignments: " << state.package_store[kv.first] << " -> " << kv.second << endl;
+        }
+        for (size_t i = 0; i < state.incompatibility_store.size(); ++i)
+        {
+            IncompId id = IncompId::from(static_cast<uint32_t>(i));
+            cout << "Incompatibility[" << i << "]: " << state.incompatibility_store[id].display(state.package_store) << endl;
+        }
+
         SmallVec<std::pair<Id<P>, IncompId>> satisfier_causes = state.unit_propagation(next);
 
         for (const auto &pair : satisfier_causes)
@@ -56,6 +60,7 @@ std::unordered_map<typename DP::P, typename DP::V> resolve(
             });
         if (!next_pick)
         {
+            cout << "Solution found!" << endl;
             std::unordered_map<P, V> result;
             for (const auto &kv : state.partial_solution.extract_solution())
             {
@@ -66,6 +71,7 @@ std::unordered_map<typename DP::P, typename DP::V> resolve(
             }
             return result;
         }
+        cout << state.package_store[next_pick->first] << " version" << *(next_pick->second) << endl;
         Id<P> highest_priority_pkg = next_pick->first;
         const VS *term_intersection = next_pick->second;
         next = highest_priority_pkg;
@@ -91,15 +97,21 @@ std::unordered_map<typename DP::P, typename DP::V> resolve(
             throw std::logic_error(oss.str());
         }
         bool is_new_dependency = added_dependencies[next].insert(v).second;
+        cout << state.package_store[next] << "@" << v << endl;
 
         if (is_new_dependency)
         {
+            // 次のpackageのバージョンがちゃんとdependencyに存在するか確認
             auto deps_result =
                 dependency_provider.get_dependencies(state.package_store[next], v);
 
             if (deps_result.tag == Availability::Unavailable)
             {
-                // TODO: Handle unavailable version properly
+                // このバージョンは利用できないので、custom incompatibilityを追加する
+                Incomp inc = Incompatibility<P, V, M>::no_versions(
+                    next,
+                    Term<V>::Positive(Ranges<V>::singleton(v)));
+                state.add_incompatibility(inc);
                 continue;
             }
 
@@ -111,8 +123,10 @@ std::unordered_map<typename DP::P, typename DP::V> resolve(
             }
 
             // Add dependencies - convert Id<P> to P (string)
+            P package_copy = state.package_store[next];
+            // ここでincompatibility_storeに追加
             auto [first_incomp, end_incomp] =
-                state.add_package_version_dependencies(state.package_store[next], v, deps_vec);
+                state.add_package_version_dependencies(package_copy, v, deps_vec);
 
             // Track conflicts for all added incompatibilities
             if (first_incomp.raw < end_incomp.raw)

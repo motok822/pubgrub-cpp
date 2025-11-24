@@ -39,8 +39,7 @@ public:
     HashArena<P> package_store;
     std::vector<Id<P>> unit_propagation_buffer;
 
-    State(Id<P> root_pkg, const V &root_ver)
-        : root_package(root_pkg), root_version(root_ver)
+    State() : root_package(), root_version()
     {
         incompatibilities = std::unordered_map<Id<P>, std::vector<IncompId>>();
         contradicted_incompatibilities = std::unordered_map<IncompId, DecisionLevel>();
@@ -49,6 +48,22 @@ public:
         incompatibility_store = Arena<Incomp>();
         package_store = HashArena<P>();
         unit_propagation_buffer = std::vector<Id<P>>();
+    }
+
+    static State init(const P &root_pkg, const V &root_ver)
+    {
+        State state;
+        state.root_package = state.package_store.alloc(root_pkg);
+        state.root_version = root_ver;
+
+        // Create not_root incompatibility
+        Incomp not_root = Incomp::not_root(state.root_package, root_ver);
+        IncompId not_root_id = state.incompatibility_store.alloc(std::move(not_root));
+
+        // Add to incompatibilities map
+        state.incompatibilities[state.root_package] = {not_root_id};
+
+        return state;
     }
 
     std::pair<IncompId, IncompId> add_package_version_dependencies(const P &package, const V &version, const std::vector<std::pair<P, VS>> &deps)
@@ -65,14 +80,21 @@ public:
                 Ranges<V>::singleton(version),
                 std::make_pair(dep_pid, dep_v));
             IncompId id = incompatibility_store.alloc(std::move(incompat));
+            std::cout << "Added dependency pkg=" << package << " ver=" << version << " -> dep_pkg=" << dep_p << " dep_range=" << dep_v << std::endl;
             merge_incompatibility(id);
         }
         std::uint32_t end_raw = incompatibility_store.size();
+        partial_solution.add_package_version_incompatibilities(
+            package_store.alloc(package),
+            version,
+            IdRange<Incomp>{IncompId::from(start_raw), IncompId::from(end_raw)},
+            incompatibility_store);
         IncompId first = IncompId::from(start_raw);
         IncompId end = IncompId::from(end_raw);
         return {first, end};
     }
     // あるincompatibilityを他のincompatibilityとmerge
+    // a@1とa@2がbに依存しているときに、a@1 || a@2 がbに依存しているものとしてマージする
     void merge_incompatibility(IncompId incomp)
     {
         const Incomp &incompat = incompatibility_store[incomp];
@@ -149,6 +171,7 @@ public:
         {
             Id<P> current_package = unit_propagation_buffer.back();
             unit_propagation_buffer.pop_back();
+            // std::cout << package_store[current_package] << ": unit propagation" << std::endl;
             std::optional<IncompId> conflict_id = std::nullopt;
 
             // Get incompatibilities for this package
@@ -162,12 +185,16 @@ public:
                 IncompId incompat_id = *rit;
                 Incomp &incompat = incompatibility_store[incompat_id];
                 auto rel = partial_solution.relation(incompat);
+                if (contradicted_incompatibilities.find(incompat_id) != contradicted_incompatibilities.end())
+                    continue;
+
                 // incompatibilityをpartial_solutionが満たしているならコンフリクト
                 if (rel.tag == IncompatRelationTag::Satisfied)
                 {
                     conflict_id = incompat_id;
                 }
-                // AlmostSatisfiedの時はpackage_almostとincompatibilityからみたすべき制約を導出する
+                // 一つだけ満たされていない状態があるのであれば、Incompatibilityを満たさないようにするためには、
+                // そのpackageの状態のnegateしたものをderivationとして追加する必要がある
                 else if (rel.tag == IncompatRelationTag::AlmostSatisfied)
                 {
                     auto package_almost = rel.pkg.value();
@@ -186,6 +213,9 @@ public:
             }
             if (conflict_id)
             {
+                std::cout << "hello2" << std::endl;
+                std::cout << package_store[current_package] << ": conflict detected during unit propagation" << std::endl;
+                std::cout << "Conflict Incompatibility: " << incompatibility_store[*conflict_id].display(package_store) << std::endl;
                 auto result = conflict_resolution(*conflict_id, satisfier_causes);
                 if (!result)
                     throw std::runtime_error("Conflict at root package during unit propagation");
@@ -211,8 +241,9 @@ public:
                 return std::nullopt;
             else
             {
+                incompatibility_store[current_incompat_id].display(package_store);
                 auto [package, satisfier_search_result] = partial_solution.satisfier_search(
-                    incompatibility_store[current_incompat_id], incompatibility_store);
+                    incompatibility_store[current_incompat_id], incompatibility_store, package_store);
                 if (satisfier_search_result.kind == SatisfierSearch<P, V, M>::Kind::DifferentDecisionLevels)
                 {
                     // current_compat_idに関するconflictを解決するためにbacktrack
