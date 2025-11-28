@@ -25,15 +25,15 @@ std::unordered_map<typename DP::P, typename DP::V> resolve(
     Id<P> next = state.root_package;
     while (true)
     {
-        for (const auto &kv : state.partial_solution.package_assignments)
-        {
-            cout << "PackageAssignments: " << state.package_store[kv.first] << " -> " << kv.second << endl;
-        }
-        for (size_t i = 0; i < state.incompatibility_store.size(); ++i)
-        {
-            IncompId id = IncompId::from(static_cast<uint32_t>(i));
-            cout << "Incompatibility[" << i << "]: " << state.incompatibility_store[id].display(state.package_store) << endl;
-        }
+        // for (const auto &kv : state.partial_solution.package_assignments)
+        // {
+        //     cout << "PackageAssignments: " << state.package_store[kv.first] << " -> " << kv.second << endl;
+        // }
+        // for (size_t i = 0; i < state.incompatibility_store.size(); ++i)
+        // {
+        //     IncompId id = IncompId::from(static_cast<uint32_t>(i));
+        //     cout << "Incompatibility[" << i << "]: " << state.incompatibility_store[id].display(state.package_store) << endl;
+        // }
 
         SmallVec<std::pair<Id<P>, IncompId>> satisfier_causes = state.unit_propagation(next);
 
@@ -60,7 +60,7 @@ std::unordered_map<typename DP::P, typename DP::V> resolve(
             });
         if (!next_pick)
         {
-            cout << "Solution found!" << endl;
+            // cout << "Solution found!" << endl;
             std::unordered_map<P, V> result;
             for (const auto &kv : state.partial_solution.extract_solution())
             {
@@ -71,7 +71,15 @@ std::unordered_map<typename DP::P, typename DP::V> resolve(
             }
             return result;
         }
-        cout << state.package_store[next_pick->first] << " version" << *(next_pick->second) << endl;
+        // for (auto conflict : conflict_tracker)
+        // {
+        //     cout << "Conflict stats for " << state.package_store[conflict.first] << ": "
+        //          << "unit_propagation_affected=" << conflict.second.unit_propagation_affected << ", "
+        //          << "unit_propagation_culprit=" << conflict.second.unit_propagation_culprit << ", "
+        //          << "dependencies_affected=" << conflict.second.dependencies_affected << ", "
+        //          << "dependencies_culprit=" << conflict.second.dependencies_culprit << endl;
+        // }
+        // cout << state.package_store[next_pick->first] << " version" << *(next_pick->second) << endl;
         Id<P> highest_priority_pkg = next_pick->first;
         const VS *term_intersection = next_pick->second;
         next = highest_priority_pkg;
@@ -97,7 +105,7 @@ std::unordered_map<typename DP::P, typename DP::V> resolve(
             throw std::logic_error(oss.str());
         }
         bool is_new_dependency = added_dependencies[next].insert(v).second;
-        cout << state.package_store[next] << "@" << v << endl;
+        // cout << state.package_store[next] << "@" << v << endl;
 
         if (is_new_dependency)
         {
@@ -124,7 +132,7 @@ std::unordered_map<typename DP::P, typename DP::V> resolve(
 
             // Add dependencies - convert Id<P> to P (string)
             P package_copy = state.package_store[next];
-            // ここでincompatibility_storeに追加
+            // ここでnext packageの指定されたversionにおけるdependenciesを全てIncompatibilityとしてstateに追加する
             auto [first_incomp, end_incomp] =
                 state.add_package_version_dependencies(package_copy, v, deps_vec);
 
@@ -147,6 +155,7 @@ std::unordered_map<typename DP::P, typename DP::V> resolve(
         }
         else
         {
+            // std::cout << "added decision: " << state.package_store[next] << "@" << v << std::endl;
             state.partial_solution.add_decision(next, v);
         }
     }

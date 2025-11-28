@@ -95,10 +95,11 @@ public:
     using TermType = Term<V>;
     using DependencyConstraints = std::map<P, VS>;
     using VersionMap = std::map<V, DependencyConstraints>;
-    using PackageDeps = std::map<P, VersionMap>;
+    using PackageDeps = std::unordered_map<P, VersionMap>;
     using Priority = std::pair<std::uint32_t, std::int32_t>;
 
-private:
+public:
+    // ここにはとりあえずユーザが設定した全てのdependency情報を保存しておく
     PackageDeps dependencies_;
 
 public:
@@ -405,6 +406,7 @@ public:
     // 一つのpackageに対しては高々1つのPackageAssignmentsを持つ
     // 解集合
     std::vector<std::pair<Id<P>, PackageAssignments<P, V, M>>> package_assignments;
+    std::unordered_map<Id<P>, size_t> package_assignments_index_map;
     std::priority_queue<
         std::tuple<Priority, uint32_t, Id<P>>,
         std::vector<std::tuple<Priority, uint32_t, Id<P>>>,
@@ -439,28 +441,31 @@ public:
 
     PackageAssignments<P, V, M> *find_package_assignments(Id<P> package)
     {
-        for (auto &kv : package_assignments)
-        {
-            if (kv.first == package)
-                return &kv.second;
-        }
+        // for (auto &kv : package_assignments)
+        // {
+        //     if (kv.first == package)
+        //         return &kv.second;
+        // }
+        if (auto it = package_assignments_index_map.find(package); it != package_assignments_index_map.end())
+            return &package_assignments[it->second].second;
         return nullptr;
     }
     const PackageAssignments<P, V, M> *find_package_assignments(Id<P> package) const
     {
-        for (const auto &kv : package_assignments)
-        {
-            if (kv.first == package)
-                return &kv.second;
-        }
+        // for (const auto &kv : package_assignments)
+        // {
+        //     if (kv.first == package)
+        //         return &kv.second;
+        // }
+        if (auto it = package_assignments_index_map.find(package); it != package_assignments_index_map.end())
+            return &package_assignments[it->second].second;
         return nullptr;
     }
 
     size_t index_of(Id<P> package) const
     {
-        for (size_t i = 0; i < package_assignments.size(); ++i)
-            if (package_assignments[i].first == package)
-                return i;
+        if (auto it = package_assignments_index_map.find(package); it != package_assignments_index_map.end())
+            return it->second;
         return static_cast<size_t>(-1);
     }
     template <typename IncompRange>
@@ -544,15 +549,18 @@ public:
         size_t old_idx = index_of(package);
         pa->highest_decision_level = current_decision_level;
         pa->assignments_intersection = AssignmentsIntersection<V>::makeDecision(next_global_index, version);
-        std::cout << current_decision_level.level << " " << package_assignments.size() << std::endl;
+        // std::cout << current_decision_level.level << " " << package_assignments.size() << std::endl;
         if (old_idx != new_idx)
+        {
+            package_assignments_index_map[package] = new_idx;
+            package_assignments_index_map[package_assignments[new_idx].first] = old_idx;
             std::swap(package_assignments[old_idx], package_assignments[new_idx]);
-        std::cout << "hello" << std::endl;
+        }
         next_global_index += 1;
     }
 
     // causeによって導出されたことを記録する
-    void add_derivation(Id<P> package, IncompId cause, const Arena<Incomp> &store)
+    void add_derivation(Id<P> package, IncompId cause, const Arena<Incomp> &store, HashArena<P> package_store)
     {
         DatedDerivation<P, V, M> dd{
             next_global_index,
@@ -571,10 +579,15 @@ public:
             }
             Term<V> new_accumulated = pa->assignments_intersection.term;
             new_accumulated = new_accumulated.intersection(dd.accumulated_intersection);
+            // std::cout << "Updated derivation for package " << package_store[package]
+            //           << ": " << pa->assignments_intersection.term_ref()
+            //           << " ∩ " << dd.accumulated_intersection
+            //           << " = " << new_accumulated << std::endl;
             dd.accumulated_intersection = new_accumulated;
             if (new_accumulated.is_positive())
                 outdated_priorities.insert(package);
             pa->dated_derivations.push_back(std::move(dd));
+            pa->assignments_intersection = AssignmentsIntersection<V>::makeDerivations(new_accumulated);
         }
         else
         {
@@ -586,8 +599,11 @@ public:
             pa.smallest_decision_level = current_decision_level;
             pa.highest_decision_level = current_decision_level;
             pa.dated_derivations.push_back(std::move(dd));
+            // std::cout << "Created new derivation for package " << package_store[package]
+            //           << ": " << term << std::endl;
             pa.assignments_intersection = AssignmentsIntersection<V>::makeDerivations(term);
             package_assignments.emplace_back(package, std::move(pa));
+            package_assignments_index_map[package] = package_assignments.size() - 1;
         }
     }
     template <class Prioritizer>
@@ -695,6 +711,11 @@ public:
             }
         }
         package_assignments.swap(new_vec);
+        package_assignments_index_map.clear();
+        for (size_t i = 0; i < package_assignments.size(); ++i)
+        {
+            package_assignments_index_map[package_assignments[i].first] = i;
+        }
         has_ever_backtracked = true;
     }
     // あるpackageに対してそれに対するバージョンの集合を返す(Assingments_intersectionは高々1つ)
@@ -726,7 +747,7 @@ public:
     SatisfiedMap find_satisfier(const Incomp &incompat, const PackageStore &pkgs) const
     {
         SatisfiedMap satisfied;
-        std::cout << "find_satisfier called for: " << incompat.display(pkgs) << "\n";
+        // std::cout << "find_satisfier called for: " << incompat.display(pkgs) << "\n";
         for (auto it = incompat.begin(); it != incompat.end(); ++it)
         {
             Id<P> package = it->first;

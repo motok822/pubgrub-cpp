@@ -80,7 +80,6 @@ public:
                 Ranges<V>::singleton(version),
                 std::make_pair(dep_pid, dep_v));
             IncompId id = incompatibility_store.alloc(std::move(incompat));
-            std::cout << "Added dependency pkg=" << package << " ver=" << version << " -> dep_pkg=" << dep_p << " dep_range=" << dep_v << std::endl;
             merge_incompatibility(id);
         }
         std::uint32_t end_raw = incompatibility_store.size();
@@ -171,7 +170,6 @@ public:
         {
             Id<P> current_package = unit_propagation_buffer.back();
             unit_propagation_buffer.pop_back();
-            // std::cout << package_store[current_package] << ": unit propagation" << std::endl;
             std::optional<IncompId> conflict_id = std::nullopt;
 
             // Get incompatibilities for this package
@@ -203,7 +201,7 @@ public:
                     {
                         unit_propagation_buffer.push_back(package_almost);
                     }
-                    partial_solution.add_derivation(package_almost, incompat_id, incompatibility_store);
+                    partial_solution.add_derivation(package_almost, incompat_id, incompatibility_store, package_store);
                     contradicted_incompatibilities[incompat_id] = partial_solution.current_decision_level;
                 }
                 else if (rel.tag == IncompatRelationTag::Contradicted)
@@ -213,17 +211,17 @@ public:
             }
             if (conflict_id)
             {
-                std::cout << "hello2" << std::endl;
-                std::cout << package_store[current_package] << ": conflict detected during unit propagation" << std::endl;
-                std::cout << "Conflict Incompatibility: " << incompatibility_store[*conflict_id].display(package_store) << std::endl;
                 auto result = conflict_resolution(*conflict_id, satisfier_causes);
                 if (!result)
                     throw std::runtime_error("Conflict at root package during unit propagation");
                 Id<P> package_almost = result->first;
                 IncompId root_cause = result->second;
+                // std::cout << "Conflict detected during unit propagation at package "
+                //           << package_store[package_almost] << " caused by incompatibility "
+                //           << incompatibility_store[root_cause].display(package_store) << std::endl;
                 unit_propagation_buffer.clear();
                 unit_propagation_buffer.push_back(package_almost);
-                partial_solution.add_derivation(package_almost, root_cause, incompatibility_store);
+                partial_solution.add_derivation(package_almost, root_cause, incompatibility_store, package_store);
                 contradicted_incompatibilities[root_cause] = partial_solution.current_decision_level;
             }
         }
