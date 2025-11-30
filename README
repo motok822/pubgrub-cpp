@@ -1,0 +1,41 @@
+# pubgrub-cpp
+
+C++ implementation of the PubGrub version solving algorithm.
+
+## Building and Testing
+
+### Run Tests
+
+First, generate test data:
+
+```bash
+python generate_test.py
+```
+
+Then build and run the test:
+
+```bash
+cd tests
+make test_loader
+```
+
+## Test Results
+
+### Performance Comparison
+
+Latest benchmark results comparing Naive vs PubGrub Solver implementations:
+
+```
+========================================
+Results
+========================================
+Solution package count: 3050
+
+Performance timing (microseconds)
+  Naive:    1982087 us (packages=3050)
+  Solver:   1566088 us (packages=3050)
+  Speedup:  1.26563x (naive/solver)
+  *** PubGrub solver is 1.26563x FASTER! ***
+```
+
+The PubGrub solver demonstrates a **1.27x speedup** over the naive implementation when resolving 3050 packages.
