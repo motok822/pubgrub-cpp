@@ -1,6 +1,5 @@
 #pragma once
 #include "term.h"
-#include "versions.h"
 #include "ranges.h"
 #include "arena.h"
 #include "small_map.h"
@@ -248,7 +247,6 @@ public:
             }
             else if (new_term == Term<V>::empty())
             {
-                // empty()の場合、packageの制約を削除
                 merged.remove(package);
             }
             else

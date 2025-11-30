@@ -1,5 +1,4 @@
 #pragma once
-#include "../include/versions.h"
 #include "../include/ranges.h"
 #include <ostream>
 #include <variant>
@@ -45,7 +44,7 @@ public:
     bool contains(const V &v) const { return is_positive() ? ranges_.contains(v) : !ranges_.contains(v); }
 
     Ranges<V> ranges() const { return ranges_; }
-    const Ranges<V>& ranges_ref() const { return ranges_; }
+    const Ranges<V> &ranges_ref() const { return ranges_; }
 
     Ranges<V> unwrap_positive() const
     {
@@ -53,7 +52,7 @@ public:
             throw std::runtime_error("Called unwrap_positive on a negative Term");
         return ranges_;
     }
-    const Ranges<V>* unwrap_positive_ptr() const
+    const Ranges<V> *unwrap_positive_ptr() const
     {
         if (!is_positive())
             return nullptr;

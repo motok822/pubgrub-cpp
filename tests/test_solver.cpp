@@ -3,8 +3,8 @@
 
 #include "../include/core.h"
 #include "../include/provider.h"
-#include "../src/solver.cpp"
-#include "../src/naive_solver.cpp" // Added to allow naive solver comparison
+#include "../src/dpll_solver.cpp"
+#include "../src/cdcl_solver.cpp" // Added to allow naive solver comparison
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -61,8 +61,8 @@ bool compare_solutions(
 static void print_timing(const std::string &label, long long naive_us, long long solver_us, size_t naive_size, size_t solver_size)
 {
     std::cout << label << " timing (microseconds)\n";
-    std::cout << "  naive:    " << naive_us << " us (packages=" << naive_size << ")\n";
-    std::cout << "  solver:   " << solver_us << " us (packages=" << solver_size << ")\n";
+    std::cout << "  DPLL:    " << naive_us << " us (packages=" << naive_size << ")\n";
+    std::cout << "  CDCL:    " << solver_us << " us (packages=" << solver_size << ")\n";
     if (solver_us > 0)
     {
         double ratio = static_cast<double>(naive_us) / static_cast<double>(solver_us);
@@ -132,20 +132,16 @@ void test_avoiding_conflict_during_decision_making()
     auto end_solver = std::chrono::steady_clock::now();
 
     // Expected maps differ between implementations in original tests
-    std::map<std::string, int> expected_naive; // from test_naive.cpp
-    expected_naive["root"] = 1;
-    expected_naive["foo"] = 10;
-    expected_naive["bar"] = 11;
-    std::map<std::string, int> expected_solver; // from test_solver.cpp
-    expected_solver["root"] = 1;
-    expected_solver["foo"] = 10;
-    expected_solver["bar"] = 11;
+    std::map<std::string, int> expected; // from test_naive.cpp
+    expected["root"] = 1;
+    expected["foo"] = 10;
+    expected["bar"] = 11;
 
     std::map<std::string, int> naive_sorted(naive_solution.begin(), naive_solution.end());
     std::map<std::string, int> solver_sorted(solver_solution.begin(), solver_solution.end());
 
-    assert(compare_solutions(expected_naive, naive_sorted));
-    assert(compare_solutions(expected_solver, solver_sorted));
+    assert(compare_solutions(expected, naive_sorted));
+    assert(compare_solutions(expected, solver_sorted));
 
     print_solution(naive_sorted);
     print_solution(solver_sorted);
@@ -167,28 +163,25 @@ void test_conflict_resolution()
     std::string root = "root";
     int root_version = 1;
 
-    auto start_naive = std::chrono::steady_clock::now();
-    auto naive_solution = dpll_resolve<TestProvider>(provider, root, root_version);
-    auto end_naive = std::chrono::steady_clock::now();
-
     auto start_solver = std::chrono::steady_clock::now();
     auto solver_solution = resolve<TestProvider>(provider, root, root_version);
     auto end_solver = std::chrono::steady_clock::now();
 
-    std::map<std::string, int> expected_naive; // original naive expected
-    expected_naive["root"] = 1;
-    expected_naive["foo"] = 1;
-    std::map<std::string, int> expected_solver; // original solver expected
-    expected_solver["root"] = 1;
-    expected_solver["foo"] = 1;
+    auto start_naive = std::chrono::steady_clock::now();
+    auto naive_solution = dpll_resolve<TestProvider>(provider, root, root_version);
+    auto end_naive = std::chrono::steady_clock::now();
+
+    std::map<std::string, int> expected; // original naive expected
+    expected["root"] = 1;
+    expected["foo"] = 1;
 
     std::map<std::string, int> naive_sorted(naive_solution.begin(), naive_solution.end());
     std::map<std::string, int> solver_sorted(solver_solution.begin(), solver_solution.end());
 
     print_solution(naive_sorted);
     print_solution(solver_sorted);
-    assert(compare_solutions(expected_naive, naive_sorted));
-    assert(compare_solutions(expected_solver, solver_sorted));
+    assert(compare_solutions(expected, naive_sorted));
+    assert(compare_solutions(expected, solver_sorted));
     print_timing("conflict_resolution",
                  std::chrono::duration_cast<std::chrono::microseconds>(end_naive - start_naive).count(),
                  std::chrono::duration_cast<std::chrono::microseconds>(end_solver - start_solver).count(),
@@ -725,16 +718,16 @@ void test_very_large_dependency_graph()
     assert(naive_sorted.count("root") > 0);
     assert(solver_sorted.count("root") > 0);
 
-    // Compare naive and solver results - they should be identical
-    std::cout << "Comparing naive vs solver results...\n";
+    // Compare naive and CDCL results - they should be identical
+    std::cout << "Comparing DPLL vs CDCL results...\n";
     bool results_match = compare_solutions(naive_sorted, solver_sorted);
 
     if (!results_match)
     {
-        std::cout << "ERROR: Naive and solver produced different results!\n";
-        std::cout << "Naive solution:\n";
+        std::cout << "ERROR: DPLL and CDCL produced different results!\n";
+        std::cout << "DPLL solution:\n";
         print_solution(naive_sorted);
-        std::cout << "Solver solution:\n";
+        std::cout << "CDCL solution:\n";
         print_solution(solver_sorted);
     }
     assert(results_match);
@@ -1310,40 +1303,34 @@ void test_conflict_heavy_graph()
     // Data processing libraries
     std::vector<std::string> data_libs = {
         "data-lib-1", "data-lib-2", "data-lib-3", "data-lib-4", "data-lib-5",
-        "data-lib-6", "data-lib-7", "data-lib-8", "data-lib-9", "data-lib-10"
-    };
+        "data-lib-6", "data-lib-7", "data-lib-8", "data-lib-9", "data-lib-10"};
 
     // IO libraries
     std::vector<std::string> io_libs = {
         "io-lib-1", "io-lib-2", "io-lib-3", "io-lib-4", "io-lib-5",
-        "io-lib-6", "io-lib-7", "io-lib-8", "io-lib-9", "io-lib-10"
-    };
+        "io-lib-6", "io-lib-7", "io-lib-8", "io-lib-9", "io-lib-10"};
 
     // Network libraries
     std::vector<std::string> net_libs = {
         "net-lib-1", "net-lib-2", "net-lib-3", "net-lib-4", "net-lib-5",
-        "net-lib-6", "net-lib-7", "net-lib-8", "net-lib-9", "net-lib-10"
-    };
+        "net-lib-6", "net-lib-7", "net-lib-8", "net-lib-9", "net-lib-10"};
 
     // String libraries
     std::vector<std::string> string_libs = {
         "string-lib-1", "string-lib-2", "string-lib-3", "string-lib-4", "string-lib-5",
-        "string-lib-6", "string-lib-7", "string-lib-8", "string-lib-9", "string-lib-10"
-    };
+        "string-lib-6", "string-lib-7", "string-lib-8", "string-lib-9", "string-lib-10"};
 
     // Some core libs also depend on data and io libs (creates more conflicts)
-    for (size_t core_idx = 0; core_idx < 5; ++core_idx)  // First 5 core libs
+    for (size_t core_idx = 0; core_idx < 5; ++core_idx) // First 5 core libs
     {
-        const std::string& core = core_libs[core_idx];
+        const std::string &core = core_libs[core_idx];
         for (int v = 10; v < 30; ++v)
         {
             if (v % 7 == 0)
             {
                 provider.add_dependencies(core, v, {
-                    {util_libs[core_idx % 10], VS::between(v - 2, v + 2)},
-                    {platform_libs[core_idx % 10], VS::between(v - 1, v + 4)},
-                    {data_libs[core_idx % 10], VS::singleton(v)}  // Tight constraint
-                });
+                                                       {util_libs[core_idx % 10], VS::between(v - 2, v + 2)}, {platform_libs[core_idx % 10], VS::between(v - 1, v + 4)}, {data_libs[core_idx % 10], VS::singleton(v)} // Tight constraint
+                                                   });
             }
         }
     }
@@ -1351,22 +1338,16 @@ void test_conflict_heavy_graph()
     // Data libraries depend on IO and string libraries
     for (size_t data_idx = 0; data_idx < data_libs.size(); ++data_idx)
     {
-        const std::string& data = data_libs[data_idx];
+        const std::string &data = data_libs[data_idx];
         for (int v = 10; v < 30; ++v)
         {
             if (v % 4 == 0)
             {
-                provider.add_dependencies(data, v, {
-                    {io_libs[data_idx % 10], VS::singleton(v)},
-                    {string_libs[data_idx % 10], VS::between(v - 1, v + 2)}
-                });
+                provider.add_dependencies(data, v, {{io_libs[data_idx % 10], VS::singleton(v)}, {string_libs[data_idx % 10], VS::between(v - 1, v + 2)}});
             }
             else
             {
-                provider.add_dependencies(data, v, {
-                    {io_libs[data_idx % 10], VS::between(v - 2, v + 3)},
-                    {string_libs[data_idx % 10], VS::between(v - 2, v + 2)}
-                });
+                provider.add_dependencies(data, v, {{io_libs[data_idx % 10], VS::between(v - 2, v + 3)}, {string_libs[data_idx % 10], VS::between(v - 2, v + 2)}});
             }
         }
     }
@@ -1374,22 +1355,16 @@ void test_conflict_heavy_graph()
     // IO libraries depend on platform and network libraries
     for (size_t io_idx = 0; io_idx < io_libs.size(); ++io_idx)
     {
-        const std::string& io = io_libs[io_idx];
+        const std::string &io = io_libs[io_idx];
         for (int v = 10; v < 30; ++v)
         {
             if (v % 5 == 0)
             {
-                provider.add_dependencies(io, v, {
-                    {platform_libs[io_idx % 10], VS::singleton(v)},
-                    {net_libs[io_idx % 10], VS::between(v, v + 3)}
-                });
+                provider.add_dependencies(io, v, {{platform_libs[io_idx % 10], VS::singleton(v)}, {net_libs[io_idx % 10], VS::between(v, v + 3)}});
             }
             else
             {
-                provider.add_dependencies(io, v, {
-                    {platform_libs[io_idx % 10], VS::between(v - 2, v + 2)},
-                    {net_libs[io_idx % 10], VS::between(v - 1, v + 4)}
-                });
+                provider.add_dependencies(io, v, {{platform_libs[io_idx % 10], VS::between(v - 2, v + 2)}, {net_libs[io_idx % 10], VS::between(v - 1, v + 4)}});
             }
         }
     }
@@ -1397,20 +1372,18 @@ void test_conflict_heavy_graph()
     // Network libraries depend on platform libraries (with conflicts)
     for (size_t net_idx = 0; net_idx < net_libs.size(); ++net_idx)
     {
-        const std::string& net = net_libs[net_idx];
+        const std::string &net = net_libs[net_idx];
         for (int v = 10; v < 30; ++v)
         {
             if (v % 6 == 0)
             {
                 provider.add_dependencies(net, v, {
-                    {platform_libs[net_idx % 10], VS::singleton(v)}  // Tight constraint
-                });
+                                                      {platform_libs[net_idx % 10], VS::singleton(v)} // Tight constraint
+                                                  });
             }
             else
             {
-                provider.add_dependencies(net, v, {
-                    {platform_libs[net_idx % 10], VS::between(v - 1, v + 3)}
-                });
+                provider.add_dependencies(net, v, {{platform_libs[net_idx % 10], VS::between(v - 1, v + 3)}});
             }
         }
     }
@@ -1418,20 +1391,18 @@ void test_conflict_heavy_graph()
     // String libraries depend on memory libraries (with conflicts)
     for (size_t str_idx = 0; str_idx < string_libs.size(); ++str_idx)
     {
-        const std::string& str = string_libs[str_idx];
+        const std::string &str = string_libs[str_idx];
         for (int v = 10; v < 30; ++v)
         {
             if (v % 8 == 0)
             {
                 provider.add_dependencies(str, v, {
-                    {memory_libs[str_idx % 10], VS::singleton(v - 1)}  // Tight constraint
-                });
+                                                      {memory_libs[str_idx % 10], VS::singleton(v - 1)} // Tight constraint
+                                                  });
             }
             else
             {
-                provider.add_dependencies(str, v, {
-                    {memory_libs[str_idx % 10], VS::between(v - 2, v + 2)}
-                });
+                provider.add_dependencies(str, v, {{memory_libs[str_idx % 10], VS::between(v - 2, v + 2)}});
             }
         }
     }
@@ -1478,9 +1449,9 @@ void test_conflict_heavy_graph()
     if (!results_match)
     {
         std::cout << "NOTE: Naive and solver produced different results (both may be valid solutions).\n";
-        std::cout << "Naive solution (" << naive_sorted.size() << " packages):\n";
+        std::cout << "DPLL solution (" << naive_sorted.size() << " packages):\n";
         print_solution(naive_sorted);
-        std::cout << "Solver solution (" << solver_sorted.size() << " packages):\n";
+        std::cout << "CDCL solution (" << solver_sorted.size() << " packages):\n";
         print_solution(solver_sorted);
         // Don't assert - both solutions may be valid
     }
@@ -1537,7 +1508,7 @@ void test_provider_basic()
 
 int main()
 {
-    std::cout << "Running Unified PubGrub Solver Tests (naive vs optimized)\n";
+    std::cout << "Running Unified PubGrub Solver Tests (DPLL vs CDCL)\n";
     std::cout << "==========================================================\n\n";
 
     test_provider_basic();
@@ -1564,5 +1535,6 @@ int main()
     std::cout << "==========================================================\n";
     std::cout << "✓ All unified tests passed!\n";
     std::cout << "Performance comparison included above.\n";
+    std::cout << "DPLL and CDCL solvers performance metrics displayed.\n";
     return 0;
 }

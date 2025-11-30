@@ -1,6 +1,5 @@
 #pragma once
 #include "term.h"
-#include "versions.h"
 #include "incompatibility.h"
 #include "ranges.h"
 #include "arena.h"
@@ -441,22 +440,12 @@ public:
 
     PackageAssignments<P, V, M> *find_package_assignments(Id<P> package)
     {
-        // for (auto &kv : package_assignments)
-        // {
-        //     if (kv.first == package)
-        //         return &kv.second;
-        // }
         if (auto it = package_assignments_index_map.find(package); it != package_assignments_index_map.end())
             return &package_assignments[it->second].second;
         return nullptr;
     }
     const PackageAssignments<P, V, M> *find_package_assignments(Id<P> package) const
     {
-        // for (const auto &kv : package_assignments)
-        // {
-        //     if (kv.first == package)
-        //         return &kv.second;
-        // }
         if (auto it = package_assignments_index_map.find(package); it != package_assignments_index_map.end())
             return &package_assignments[it->second].second;
         return nullptr;
@@ -474,7 +463,8 @@ public:
         Id<P> package,
         const V &version,
         const IncompRange &new_incompatibilities,
-        const Arena<Incomp> &store)
+        const Arena<Incomp> &store,
+        const HashArena<P> &package_store)
     {
         // まだ一度も backtrack していないなら fast path:
         // 依存関係をチェックせずにそのまま決定として追加してしまう。
@@ -511,13 +501,11 @@ public:
             if (relation(incompat_id).tag == IncompatRelationTag::Satisfied)
             {
                 // このバージョンを決定すると依存関係と矛盾するので reject
-                // log_info("rejecting decision {} @ {} because its dependencies conflict", package, version);
                 return incompat_id; // 衝突した incompat を返す
             }
         }
 
         // どの incompat も conflict を起こさなかったので、この package@version を決定として追加
-        // log_info("adding decision: {} @ {}", package, version);
         add_decision(package, version);
         return std::nullopt;
     }
@@ -549,7 +537,6 @@ public:
         size_t old_idx = index_of(package);
         pa->highest_decision_level = current_decision_level;
         pa->assignments_intersection = AssignmentsIntersection<V>::makeDecision(next_global_index, version);
-        // std::cout << current_decision_level.level << " " << package_assignments.size() << std::endl;
         if (old_idx != new_idx)
         {
             package_assignments_index_map[package] = new_idx;
@@ -579,10 +566,6 @@ public:
             }
             Term<V> new_accumulated = pa->assignments_intersection.term;
             new_accumulated = new_accumulated.intersection(dd.accumulated_intersection);
-            // std::cout << "Updated derivation for package " << package_store[package]
-            //           << ": " << pa->assignments_intersection.term_ref()
-            //           << " ∩ " << dd.accumulated_intersection
-            //           << " = " << new_accumulated << std::endl;
             dd.accumulated_intersection = new_accumulated;
             if (new_accumulated.is_positive())
                 outdated_priorities.insert(package);
@@ -599,8 +582,6 @@ public:
             pa.smallest_decision_level = current_decision_level;
             pa.highest_decision_level = current_decision_level;
             pa.dated_derivations.push_back(std::move(dd));
-            // std::cout << "Created new derivation for package " << package_store[package]
-            //           << ": " << term << std::endl;
             pa.assignments_intersection = AssignmentsIntersection<V>::makeDerivations(term);
             package_assignments.emplace_back(package, std::move(pa));
             package_assignments_index_map[package] = package_assignments.size() - 1;
@@ -756,20 +737,19 @@ public:
             const auto *pa = find_package_assignments(package);
             if (!pa)
                 throw std::logic_error("find_satisfier: package assignments not found");
-            // std::cout << "find_satisfier: package " << pkgs[package] << ", incompat_term " << incompat_term << ", negate=" << incompat_term.negate() << "\n";
-            // std::cout << "  PA state: " << *pa << "\n";
             Information info = pa->satisfier(package, incompat_term.negate());
             satisfied.insert(package, info);
         }
         return satisfied;
     }
+    // Incompatibilityを満たすpackageの中で、最も最近のdecision levelで満たしているpackageを探す
     template <class PackageStore>
     std::pair<Id<P>, SatisfierSearch<P, V, M>>
     satisfier_search(const Incomp &incompat, const Arena<Incomp> &store, const PackageStore &pkgs) const
     {
         auto satisfied_map = find_satisfier(incompat, pkgs);
         Id<P> satisfier_package{};
-        std::tuple<std::optional<IncompId>, uint32_t, DecisionLevel> satisfier_info{};
+        Information satisfier_info{};
         uint32_t max_gidx = 0;
 
         // 一番満たす制約でglobal indexが大きいものを探す
@@ -785,7 +765,7 @@ public:
         }
         auto [satisfier_cause, _, satisfier_decision_level] = satisfier_info;
         (void)_;
-        DecisionLevel prev_level = find_previous_satisfier(incompat, satisfier_package, satisfied_map, store);
+        DecisionLevel prev_level = find_previous_satisfier(incompat, satisfier_package, satisfied_map, store, pkgs);
         if (prev_level >= satisfier_decision_level)
         {
             return {satisfier_package,
@@ -798,13 +778,15 @@ public:
         }
     }
 
-    // 与えられたIncompatibilityのversionと現在のpackageのversoinで積集合をとって厳しい条件を作った時に、
+    // 与えられたIncompatibilityのpackageのversionと原因のIncompatibilityのpackageのversoin
+    // をどちらもnegateして満たさない状況を、作った時に、
     // その条件が直近どのDecision levelで満たされているかを測る
     DecisionLevel find_previous_satisfier(
         const Incomp &incompat,
         Id<P> satisfier_package,
         SatisfiedMap &satisfied_map,
-        const Arena<Incomp> &store) const
+        const Arena<Incomp> &store,
+        const HashArena<P> &package_store) const
     {
         const auto *satisfier_pa = find_package_assignments(satisfier_package);
         if (!satisfier_pa)
@@ -819,6 +801,8 @@ public:
         (void)_dl;
 
         Term<V> accum_term;
+        // 原因となっているpackageのversion集合を取得する
+        // その原因となっているversionをnegateしたものとincompatibilityのversion集合の積集合をとる
         if (satisfier_cause_opt.has_value())
         {
             const auto &cause = *satisfier_cause_opt;
@@ -826,6 +810,7 @@ public:
         }
         else
         {
+            // 原因がdecisionの場合はsatisfier_cause_optはnulloptになる
             if (!satisfier_pa->assignments_intersection.isDecision())
                 throw std::logic_error("previous_satisfier: must be a decision if no cause");
             accum_term = satisfier_pa->assignments_intersection.term;

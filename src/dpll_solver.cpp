@@ -69,11 +69,12 @@ bool dpll_resolve(
     std::unordered_map<typename DP::P, Ranges<typename DP::V>> &not_completed_dependencies,
     std::vector<Id<typename DP::P>> &next_packages)
 {
-    using P = typename DP::P;
-    using V = typename DP::V;
-    using M = typename DP::M;
-    using VS = Ranges<V>;
-    using DependencyConstraints = std::map<P, VS>;
+    using Types = PubGrubTypes<DP>;
+    using P = typename Types::P;
+    using V = typename Types::V;
+    using M = typename Types::M;
+    using VS = typename Types::VS;
+    using DependencyConstraints = typename Types::DependencyConstraints;
     std::vector<Id<P>> new_next_packages;
 
     // Make a local copy of package to avoid reference invalidation

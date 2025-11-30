@@ -1,21 +1,22 @@
 #pragma once
 #include "term.h"
-#include "versions.h"
 #include "incompatibility.h"
 #include "ranges.h"
 #include "arena.h"
 #include "small_map.h"
 #include "provider.h"
+#include "types.h"
 
 template <class DP>
 class State
 {
-    using P = typename DP::P;
-    using V = typename DP::V;
-    using M = typename DP::M;
-    using VS = Ranges<V>;
-    using Incomp = Incompatibility<P, V, M>;
-    using IncompId = Id<Incomp>;
+    using Types = PubGrubTypes<DP>;
+    using P = typename Types::P;
+    using V = typename Types::V;
+    using M = typename Types::M;
+    using VS = typename Types::VS;
+    using Incomp = typename Types::Incomp;
+    using IncompId = typename Types::IncompId;
 
 public:
     Id<P> root_package;
@@ -66,7 +67,7 @@ public:
         return state;
     }
 
-    std::pair<IncompId, IncompId> add_package_version_dependencies(const P &package, const V &version, const std::vector<std::pair<P, VS>> &deps)
+    std::optional<IncompId> add_package_version_dependencies(const P &package, const V &version, const std::vector<std::pair<P, VS>> &deps)
     {
         std::uint32_t start_raw = incompatibility_store.size();
         for (const auto &entry : deps)
@@ -83,14 +84,12 @@ public:
             merge_incompatibility(id);
         }
         std::uint32_t end_raw = incompatibility_store.size();
-        partial_solution.add_package_version_incompatibilities(
+        return partial_solution.add_package_version_incompatibilities(
             package_store.alloc(package),
             version,
             IdRange<Incomp>{IncompId::from(start_raw), IncompId::from(end_raw)},
-            incompatibility_store);
-        IncompId first = IncompId::from(start_raw);
-        IncompId end = IncompId::from(end_raw);
-        return {first, end};
+            incompatibility_store,
+            package_store);
     }
     // あるincompatibilityを他のincompatibilityとmerge
     // a@1とa@2がbに依存しているときに、a@1 || a@2 がbに依存しているものとしてマージする
@@ -202,6 +201,7 @@ public:
                         unit_propagation_buffer.push_back(package_almost);
                     }
                     partial_solution.add_derivation(package_almost, incompat_id, incompatibility_store, package_store);
+
                     contradicted_incompatibilities[incompat_id] = partial_solution.current_decision_level;
                 }
                 else if (rel.tag == IncompatRelationTag::Contradicted)
@@ -216,9 +216,6 @@ public:
                     throw std::runtime_error("Conflict at root package during unit propagation");
                 Id<P> package_almost = result->first;
                 IncompId root_cause = result->second;
-                // std::cout << "Conflict detected during unit propagation at package "
-                //           << package_store[package_almost] << " caused by incompatibility "
-                //           << incompatibility_store[root_cause].display(package_store) << std::endl;
                 unit_propagation_buffer.clear();
                 unit_propagation_buffer.push_back(package_almost);
                 partial_solution.add_derivation(package_almost, root_cause, incompatibility_store, package_store);
@@ -236,7 +233,9 @@ public:
         while (true)
         {
             if (incompatibility_store[current_incompat_id].is_terminal(root_package, root_version))
+            {
                 return std::nullopt;
+            }
             else
             {
                 incompatibility_store[current_incompat_id].display(package_store);
@@ -244,7 +243,6 @@ public:
                     incompatibility_store[current_incompat_id], incompatibility_store, package_store);
                 if (satisfier_search_result.kind == SatisfierSearch<P, V, M>::Kind::DifferentDecisionLevels)
                 {
-                    // current_compat_idに関するconflictを解決するためにbacktrack
                     backtrack(current_incompat_id, current_incompat_changed, satisfier_search_result.previous_satisfier_level);
                     satisfier_causes.push(std::make_pair(package, current_incompat_id));
                     return std::make_optional(std::make_pair(package, current_incompat_id));
