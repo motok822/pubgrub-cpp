@@ -22,12 +22,12 @@ using VS = Ranges<int>;
 static void print_timing(const std::string &label, long long naive_us, long long solver_us, size_t naive_size, size_t solver_size)
 {
     std::cout << label << " timing (microseconds)\n";
-    std::cout << "  Naive:    " << naive_us << " us (packages=" << naive_size << ")\n";
-    std::cout << "  Solver:   " << solver_us << " us (packages=" << solver_size << ")\n";
+    std::cout << "  DPLL:    " << naive_us << " us (packages=" << naive_size << ")\n";
+    std::cout << "  CDCL:   " << solver_us << " us (packages=" << solver_size << ")\n";
     if (solver_us > 0)
     {
         double speedup = static_cast<double>(naive_us) / solver_us;
-        std::cout << "  Speedup:  " << speedup << "x (naive/solver)\n";
+        std::cout << "  Speedup:  " << speedup << "x (DPLL/CDCL)\n";
 
         if (speedup > 1.0)
         {
@@ -35,7 +35,7 @@ static void print_timing(const std::string &label, long long naive_us, long long
         }
         else
         {
-            std::cout << "  Note: Naive is faster for this case (ratio=" << (1.0 / speedup) << "x)\n";
+            std::cout << "  Note: DPLL is faster for this case (ratio=" << (1.0 / speedup) << "x)\n";
         }
     }
 }
@@ -160,13 +160,13 @@ int main(int argc, char *argv[])
     auto start_naive = std::chrono::steady_clock::now();
     auto naive_solution = dpll_resolve<TestProvider>(provider, root, root_version);
     auto end_naive = std::chrono::steady_clock::now();
-    std::cout << "      Naive solver completed.\n\n";
+    std::cout << "      DPLL solver completed.\n\n";
 
     std::cout << "[2/2] Running optimized PubGrub solver...\n";
     auto start_solver = std::chrono::steady_clock::now();
     auto solver_solution = resolve<TestProvider>(provider, root, root_version);
     auto end_solver = std::chrono::steady_clock::now();
-    std::cout << "      PubGrub solver completed.\n\n";
+    std::cout << "      CDCL solver completed.\n\n";
 
     // Convert to sorted maps for comparison
     std::map<std::string, int> naive_sorted(naive_solution.begin(), naive_solution.end());
